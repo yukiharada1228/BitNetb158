@@ -2,9 +2,7 @@
 version = "0.0.1"
 name = "bitnet158"
 description = "BitNet-b158"
-readme = "README.md"
 requires-python = ">=3.8"
-license = {file = "LICENSE"}
 authors = [
   {name = "Yuki Harada", email = "yukiharada1228@gmail.com"},
 ]
