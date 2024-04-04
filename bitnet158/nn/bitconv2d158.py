@@ -65,7 +65,8 @@ class BitConv2d158(nn.Conv2d):
         return x * (beta * gamma / self.quantization_range)
 
     def forward(self, x):
-        x_q, gamma = self.absmax_quantize(x, self.quantization_range, self.epsilon)
+        x_norm = F.layer_norm(x, x.shape[1:])
+        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
         w_q, beta = self.quantize_weights(self.weight, self.epsilon)
         x_conv2d = F.conv2d(
             input=x_q,
