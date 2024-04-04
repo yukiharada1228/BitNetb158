@@ -38,7 +38,7 @@ class QuantizationMixin:
         return x * (beta * gamma / self.quantization_range)
 
 
-class BitLinearb158(QuantizationMixin, nn.Linear):
+class BitLinearb158(nn.Linear, QuantizationMixin):
     def __init__(
         self,
         in_features: int,
@@ -49,8 +49,8 @@ class BitLinearb158(QuantizationMixin, nn.Linear):
         device=None,
         dtype=None,
     ):
-        nn.Linear.__init__(
-            self, in_features, out_features, bias, device=device, dtype=dtype
+        super(BitLinearb158, self).__init__(
+            in_features, out_features, bias, device=device, dtype=dtype
         )
         QuantizationMixin.__init__(self, num_bits, epsilon)
 
@@ -63,7 +63,7 @@ class BitLinearb158(QuantizationMixin, nn.Linear):
         return output
 
 
-class BitConv2db158(nn.Conv2d):
+class BitConv2db158(nn.Conv2d, QuantizationMixin):
     def __init__(
         self,
         in_channels: int,
@@ -80,7 +80,7 @@ class BitConv2db158(nn.Conv2d):
         device=None,
         dtype=None,
     ) -> None:
-        nn.Conv2d.__init__(
+        super(BitConv2db158, self).__init__(
             in_channels,
             out_channels,
             kernel_size,
