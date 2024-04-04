@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn.common_types import _size_2_t
 
 
-class BitConv2d158(nn.Conv2d):
+class BitConv2db158(nn.Conv2d):
     def __init__(
         self,
         in_channels: int,
@@ -22,7 +22,7 @@ class BitConv2d158(nn.Conv2d):
         device=None,
         dtype=None,
     ) -> None:
-        super(BitConv2d158, self).__init__(
+        super(BitConv2db158, self).__init__(
             in_channels,
             out_channels,
             kernel_size,

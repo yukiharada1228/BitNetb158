@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 
-class BitLinear158(nn.Linear):
+class BitLinearb158(nn.Linear):
     def __init__(
         self,
         in_features: int,
@@ -15,7 +15,7 @@ class BitLinear158(nn.Linear):
         device=None,
         dtype=None,
     ):
-        super(BitLinear158, self).__init__(
+        super(BitLinearb158, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
         )
         self.num_bits = num_bits

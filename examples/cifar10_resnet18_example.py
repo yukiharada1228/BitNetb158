@@ -1,12 +1,12 @@
 import torch
+import torchvision
 from seed import set_seed
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from bitnet158.models.resnet import resnet18
-from bitnet158.nn import BitConv2d158, BitLinear158
+from bitnetb158.models import bitresnet18b158
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -69,12 +69,15 @@ def main():
     )
 
     print(f"Testing on {device=}")
-    bitnet = resnet18(
-        BitLinear158, BitConv2d158, pretrained=False, num_classes=num_classes
-    ).to(device)
-    floatnet = resnet18(
-        nn.Linear, nn.Conv2d, pretrained=False, num_classes=num_classes
-    ).to(device)
+    bitnet = bitresnet18b158(num_classes).to(device)
+    bitnet.__name__ = "BitNet"
+    floatnet = torchvision.models.resnet18(pretrained=False, num_classes=num_classes)
+    floatnet.conv1 = nn.Conv2d(
+        3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
+    )
+    floatnet.maxpool = nn.Identity()
+    floatnet = floatnet.to(device)
+    floatnet.__name__ = "FloatNet"
 
     bitnet_optimizer = torch.optim.Adam(bitnet.parameters(), lr=learning_rate)
     floatnet_optimizer = torch.optim.Adam(floatnet.parameters(), lr=learning_rate)
