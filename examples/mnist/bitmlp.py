@@ -1,89 +1,131 @@
+from collections.abc import Callable
+
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
+from seed import set_seed
+from torch import Tensor, nn
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from tqdm import tqdm
 
 from bitnet158.nn import BitLinear158
 
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-
-# デバイスの設定（GPUが利用可能な場合はGPU、そうでない場合はCPUを使用）
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ハイパーパラメータの設定
-input_size = 28 * 28  # 入力サイズ（MNIST画像のサイズ）
-hidden_size = 128     # 隠れ層のサイズ
-num_classes = 10      # クラス数
-num_epochs = 10       # エポック数
-batch_size = 100      # バッチサイズ
-learning_rate = 0.001 # 学習率
 
-# MNISTデータセットの読み込みと前処理
-transform = transforms.Compose([
-    transforms.ToTensor(),  # テンソルに変換
-    transforms.Normalize((0.5,), (0.5,))  # 平均0.5、標準偏差0.5で正規化
-])
+class Net(nn.Module):
+    def __init__(
+        self,
+        linear_layer: Callable,
+        input_size: int,
+        hidden_size: int,
+        num_classes: int,
+    ) -> None:
+        super(Net, self).__init__()
+        self.linear_layer = linear_layer
+        self.fc1 = linear_layer(input_size, hidden_size)
+        self.fc2 = linear_layer(hidden_size, num_classes)
 
-train_dataset = torchvision.datasets.MNIST(root='./data', train=True, transform=transform, download=True)
-test_dataset = torchvision.datasets.MNIST(root='./data', train=False, transform=transform)
+    @property
+    def __name__(self) -> str:
+        return "BitNet" if self.linear_layer == BitLinear158 else "FloatNet"
 
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+    def forward(self, _input: Tensor) -> Tensor:
+        out = _input.flatten(start_dim=1)
+        out = torch.relu(self.fc1(out))
+        out = self.fc2(out)
+        return out
 
-# 多層パーセプトロン（MLP）モデルの定義
-class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
-        super(MLP, self).__init__()
-        self.fc1 = BitLinear158(input_size, hidden_size)
-        self.fc2 = BitLinear158(hidden_size, num_classes)
-    
-    def forward(self, x):
-        x = x.view(-1, input_size)  # 画像の形状をバッチサイズ×784に変更
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
 
-model = MLP(input_size, hidden_size, num_classes).to(device)
+def train_model(
+    model: nn.Module,
+    train_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.CrossEntropyLoss,
+    num_epochs: int,
+) -> None:
+    for epoch in range(num_epochs):
+        pbar = tqdm(total=len(train_loader), desc=f"Training {model.__name__}")
+        running_loss: float = 0.0
+        for i, (images, labels) in enumerate(train_loader):
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
 
-# 損失関数と最適化手法の定義
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-# モデルの学習
-for epoch in range(num_epochs):
-    for i, (images, labels) in enumerate(train_loader):
-        images = images.to(device)
-        labels = labels.to(device)
-        
-        # 順伝播と損失の計算
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        
-        # 逆伝播とパラメータの更新
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        if (i+1) % 100 == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}')
+            running_loss += loss.item()
+            pbar.set_description(
+                f"Model: {model.__name__} - Epoch [{epoch+1}], Loss: {running_loss / (i+1):.4f}"
+            )
+            pbar.update(1)
+        pbar.close()
 
-# モデルの評価
-model.eval()
-with torch.no_grad():
-    correct = 0
-    total = 0
-    for images, labels in test_loader:
-        images = images.to(device)
-        labels = labels.to(device)
-        outputs = model(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
 
-    print(f'Accuracy of the model on the 10000 test images: {100 * correct / total}%')
+def test_model(model: nn.Module, test_loader: DataLoader):
+    model.eval()
+    correct: int = 0
+    total: int = 0
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    accuracy = 100 * correct / total
+    print(f"Accuracy of {model.__name__}: {accuracy:.2f}%")
+    return accuracy
+
+
+def main():
+
+    set_seed()
+
+    input_size: int = 784
+    hidden_size: int = 100
+    num_classes: int = 10
+    learning_rate: float = 1e-3
+    num_epochs: int = 5
+    batch_size: int = 128
+
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+    )
+
+    print(f"Testing on {device=}")
+    bitnet = Net(BitLinear158, input_size, hidden_size, num_classes).to(device)
+    floatnet = Net(nn.Linear, input_size, hidden_size, num_classes).to(device)
+
+    bitnet_optimizer = torch.optim.Adam(bitnet.parameters(), lr=learning_rate)
+    floatnet_optimizer = torch.optim.Adam(floatnet.parameters(), lr=learning_rate)
+
+    criterion = nn.CrossEntropyLoss()
+
+    train_dataset = datasets.MNIST(
+        "./mnist_data", train=True, download=True, transform=transform
+    )
+    test_dataset = datasets.MNIST(
+        "./mnist_data", train=False, download=True, transform=transform
+    )
+
+    set_seed()
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_model(bitnet, train_loader, bitnet_optimizer, criterion, num_epochs)
+    bitnet_accuracy: float = test_model(bitnet, test_loader)
+
+    set_seed()
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_model(floatnet, train_loader, floatnet_optimizer, criterion, num_epochs)
+    floatnet_accuracy: float = test_model(floatnet, test_loader)
+
+    difference = abs(floatnet_accuracy - bitnet_accuracy)
+    diff_threshold = 1.0
+    assert difference < diff_threshold, "Accuracy must be within 1%"
+
+
+if __name__ == "__main__":
+    main()

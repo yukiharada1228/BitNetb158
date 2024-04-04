@@ -1,7 +1,9 @@
+from typing import Tuple
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import nn
+from transformers.models.llama.modeling_llama import LlamaRMSNorm
 
 
 class BitLinear158(nn.Linear):
@@ -11,50 +13,51 @@ class BitLinear158(nn.Linear):
         out_features: int,
         bias: bool = True,
         num_bits: int = 8,
+        is_norm: bool = True,
+        rms_norm_eps: float = 1e-6,
         device=None,
         dtype=None,
-    ) -> None:
-        super().__init__(
-            in_features, out_features, bias=bias, device=device, dtype=dtype
+    ):
+        super(BitLinear158, self).__init__(
+            in_features, out_features, bias, device=device, dtype=dtype
         )
-        self.eps: float = 1e-5
-        self.quantization_range: int = 2 ** (num_bits - 1)
+        self.num_bits = num_bits
+        self.quantization_range = 2 ** (self.num_bits - 1)
+        self.epsilon = 1e-6
+        if is_norm:
+            self.layer_norm = LlamaRMSNorm(hidden_size=in_features, eps=rms_norm_eps)
+        else:
+            self.layer_norm = nn.Identity()
 
-    def ste_weights(self, weights_gamma: float) -> Tensor:
-        scaled_weights: Tensor = self.weight / (weights_gamma + self.eps)
-        bin_weights_no_grad: Tensor = torch.sign(scaled_weights) * torch.clamp(
-            torch.abs(scaled_weights).round(), max=1.0
-        )
-        bin_weights_with_grad: Tensor = (
-            bin_weights_no_grad - self.weight
-        ).detach() + self.weight
-        return bin_weights_with_grad
+    def absmax_quantize(
+        self, x: torch.Tensor, quantization_range: int, epsilon: float
+    ) -> Tuple[torch.Tensor, float]:
+        gamma = torch.abs(x).max().clamp(min=epsilon)
+        x_scaled = x * quantization_range / gamma
+        x_q = (
+            torch.clamp(
+                torch.round(x_scaled), -quantization_range, quantization_range - 1
+            )
+            - x_scaled
+        ).detach() + x_scaled
+        return x_q, gamma
 
-    def binarize_weights(self, weights_gamma: float) -> Tensor:
-        binarized_weights = self.ste_weights(weights_gamma)
-        return binarized_weights
+    def quantize_weights(
+        self, weight: torch.Tensor, epsilon: float
+    ) -> Tuple[torch.Tensor, float]:
+        beta = weight.abs().mean().clamp(min=epsilon)
+        weight_trinarized = (
+            torch.clamp(torch.round(weight / beta), -1, 1) - weight
+        ).detach() + weight
+        return weight_trinarized, beta
 
-    def quantize_activations(self, input: Tensor, input_gamma: float) -> Tensor:
-        quantized_input = torch.clamp(
-            input * self.quantization_range / input_gamma,
-            -self.quantization_range + self.eps,
-            self.quantization_range - self.eps,
-        )
-        return quantized_input
+    def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
+        return x * (beta * gamma / self.quantization_range)
 
-    def dequantize_activations(
-        self, input: Tensor, input_gamma: float, beta: float
-    ) -> Tensor:
-        return input * input_gamma * beta / self.quantization_range
-
-    def forward(self, input: Tensor) -> Tensor:
-        normalized_input: Tensor = F.layer_norm(input, (input.shape[1:]))
-        input_gamma: float = normalized_input.abs().max().item()
-        weight_abs_mean: float = self.weight.abs().mean().item()
-
-        binarized_weights = self.binarize_weights(weight_abs_mean)
-        input_quant = self.quantize_activations(normalized_input, input_gamma)
-        output = F.linear(input_quant, binarized_weights, self.bias)
-        output = self.dequantize_activations(output, input_gamma, weight_abs_mean)
-
+    def forward(self, x):
+        x_norm = self.layer_norm(x)
+        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
+        w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        x_matmul = F.linear(x_q, w_q, self.bias)
+        output = self.dequantize(x_matmul, gamma, beta)
         return output
