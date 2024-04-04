@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torchvision
 
-from ..replace_hf import replace_layers_with_bitb158_layers
+from ...replace_hf import replace_layers_with_bitb158_layers
 
 
 def bitresnet18b158(num_classes=10):

@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from bitnetb158.models import bitresnet18b158
+from bitnetb158.models.cifar_models import bitresnet18b158
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
