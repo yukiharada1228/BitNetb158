@@ -37,6 +37,10 @@ class QuantizationMixin:
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
         return x * (beta * gamma / self.quantization_range)
 
+    def get_quantized_weights(self):
+        w_q, _ = self.quantize_weights(self.weight, self.epsilon)
+        return w_q
+
 
 class BitLinearb158(nn.Linear, QuantizationMixin):
     def __init__(
