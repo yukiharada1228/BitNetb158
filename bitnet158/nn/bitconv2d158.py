@@ -1,22 +1,39 @@
-from typing import Tuple
+from typing import Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.common_types import _size_2_t
 
 
-class BitLinear158(nn.Linear):
+class BitConv2d158(nn.Conv2d):
     def __init__(
         self,
-        in_features: int,
-        out_features: int,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: _size_2_t,
+        stride: _size_2_t = 1,
+        padding: Union[str, _size_2_t] = 0,
+        dilation: _size_2_t = 1,
+        groups: int = 1,
         bias: bool = True,
+        padding_mode: str = "zeros",
         num_bits: int = 8,
         device=None,
         dtype=None,
-    ):
-        super(BitLinear158, self).__init__(
-            in_features, out_features, bias, device=device, dtype=dtype
+    ) -> None:
+        super(BitConv2d158, self).__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+            device=device,
+            dtype=dtype,
         )
         self.num_bits = num_bits
         self.quantization_range = 2 ** (self.num_bits - 1)
@@ -50,6 +67,14 @@ class BitLinear158(nn.Linear):
     def forward(self, x):
         x_q, gamma = self.absmax_quantize(x, self.quantization_range, self.epsilon)
         w_q, beta = self.quantize_weights(self.weight, self.epsilon)
-        x_matmul = F.linear(x_q, w_q, self.bias)
-        output = self.dequantize(x_matmul, gamma, beta)
+        x_conv2d = F.conv2d(
+            input=x_q,
+            weight=w_q,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups,
+        )
+        output = self.dequantize(x_conv2d, gamma, beta)
         return output
