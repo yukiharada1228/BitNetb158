@@ -6,7 +6,7 @@
 </p>
 
 # BitNet-b158
-Implemented various networks using quantization proposed in The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits (https://arxiv.org/abs/2402.17764).
+Implemented various networks using quantization proposed in [The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits](https://arxiv.org/abs/2402.17764).
 
 ## Usage
 To use the BitNet-b158 in your project, follow these steps:
