@@ -29,9 +29,10 @@ class QuantizationMixin:
         self, weight: torch.Tensor, epsilon: float
     ) -> Tuple[torch.Tensor, float]:
         beta = weight.abs().mean().clamp(min=epsilon)
+        weight_scaled = weight / beta
         weight_quantized = (
-            torch.clamp(torch.round(weight / beta), -1, 1) - weight
-        ).detach() + weight
+            torch.clamp(torch.round(weight_scaled), -1, 1) - weight_scaled
+        ).detach() + weight_scaled
         return weight_quantized, beta
 
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
