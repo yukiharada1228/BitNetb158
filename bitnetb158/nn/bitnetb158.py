@@ -15,7 +15,7 @@ class QuantizationMixin:
     def absmax_quantize(
         self, x: torch.Tensor, quantization_range: int, epsilon: float
     ) -> Tuple[torch.Tensor, float]:
-        gamma = torch.abs(x).max().clamp(min=epsilon)
+        gamma = x.abs().max().clamp(min=epsilon)
         x_scaled = x * quantization_range / gamma
         x_q = (
             torch.clamp(
@@ -29,10 +29,9 @@ class QuantizationMixin:
         self, weight: torch.Tensor, epsilon: float
     ) -> Tuple[torch.Tensor, float]:
         beta = weight.abs().mean().clamp(min=epsilon)
-        weight_scaled = weight / beta
         weight_quantized = (
-            torch.clamp(torch.round(weight_scaled), -1, 1) - weight_scaled
-        ).detach() + weight_scaled
+            torch.clamp(torch.round(weight / beta), -1, 1) - weight
+        ).detach() + weight
         return weight_quantized, beta
 
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
