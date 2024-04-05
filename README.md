@@ -9,7 +9,7 @@
 Implemented various networks using quantization proposed in [The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits](https://arxiv.org/abs/2402.17764).
 
 ## Usage
-To use the BitNet-b158 in your project, follow these steps:
+To use the BitNetb158 in your project, follow these steps:
 1. Clone the repository:
 ```bash
 git clone https://github.com/yukiharada1228/BitNetb158.git
