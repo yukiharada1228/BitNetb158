@@ -63,6 +63,50 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         output = self.dequantize(x_matmul, gamma, beta)
         return output
 
+    def pack_ternary(self, x: torch.Tensor) -> torch.Tensor:
+        assert (
+            x.shape[-1] % 4 == 0
+        ), "The last dimension size of x must be divisible by 4"
+        dtype = torch.int8
+        device = x.device
+        x_mapped = x.to(dtype).clone()
+        x_mapped[x == -1] = 2
+        shift = torch.arange(4, device=x.device) * 2
+        shape = x.shape[:-1]
+        x = x_mapped.view(-1, x.shape[-2], x.shape[-1] // 4, 4)
+        x = x << shift[None, None, None, :]
+        x = x.sum(-1)
+        x = x.view(*shape, *x.shape[-1:])
+        return x.to(dtype).to(device)
+
+    def unpack_ternary(self, x: torch.Tensor) -> torch.Tensor:
+        masks = (3 << (2 * torch.arange(4, device=x.device))).view(1, 1, 1, -1)
+        x_expanded = x.unsqueeze(-1)
+        x_expanded = x_expanded * torch.ones_like(masks)
+        unpacked = (x_expanded & masks) >> (2 * torch.arange(4, device=x.device)).view(
+            1, 1, 1, -1
+        )
+        unpacked = torch.where(
+            unpacked == 2, torch.tensor(-1, device=x.device), unpacked
+        )
+        return unpacked.view(*x.shape[:-1], -1)
+
+    def convert_weights_to_packed(self):
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+            packed_weight = self.pack_ternary(w_q)
+            self.beta = torch.nn.Parameter(beta)
+            del self.weight
+            self.register_buffer("weight", packed_weight)
+
+    def forward_after_packed(self, x):
+        x_norm = F.layer_norm(x, x.shape[1:])
+        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
+        unpacked_weight = self.unpack_ternary(self.weight)
+        x_matmul = F.linear(x_q, unpacked_weight.to(torch.float32), self.bias)
+        output = self.dequantize(x_matmul, gamma, self.beta)
+        return output
+
 
 class BitConv2db158(nn.Conv2d, QuantizationMixin):
     def __init__(
