@@ -7,7 +7,7 @@ from torch.nn.common_types import _size_2_t
 
 
 class QuantizationMixin:
-    def __init__(self, num_bits: int = 8, epsilon: float = 1e-6):
+    def __init__(self, num_bits: int = 8, epsilon: float = 1e-5):
         self.num_bits = num_bits
         self.quantization_range = 2 ** (self.num_bits - 1)
         self.epsilon = epsilon
@@ -38,10 +38,6 @@ class QuantizationMixin:
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
         return x * (beta * gamma / self.quantization_range)
 
-    def get_quantized_weights(self):
-        w_q, _ = self.quantize_weights(self.weight, self.epsilon)
-        return w_q
-
 
 class BitLinearb158(nn.Linear, QuantizationMixin):
     def __init__(
@@ -50,7 +46,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         out_features: int,
         bias: bool = True,
         num_bits: int = 8,
-        epsilon: float = 1e-6,
+        epsilon: float = 1e-5,
         device=None,
         dtype=None,
     ):
@@ -81,7 +77,7 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
         bias: bool = True,
         padding_mode: str = "zeros",
         num_bits: int = 8,
-        epsilon: float = 1e-6,
+        epsilon: float = 1e-5,
         device=None,
         dtype=None,
     ) -> None:
