@@ -7,7 +7,7 @@ from torch.nn.common_types import _size_2_t
 
 
 class QuantizationMixin:
-    def __init__(self, num_bits: int = 8, epsilon: float = 1e-6):
+    def __init__(self, num_bits: int = 8, epsilon: float = 1e-5):
         self.num_bits = num_bits
         self.quantization_range = 2 ** (self.num_bits - 1)
         self.epsilon = epsilon
@@ -38,9 +38,41 @@ class QuantizationMixin:
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
         return x * (beta * gamma / self.quantization_range)
 
-    def get_quantized_weights(self):
-        w_q, _ = self.quantize_weights(self.weight, self.epsilon)
-        return w_q
+    def pack_ternary(self, x: torch.Tensor) -> torch.Tensor:
+        assert (
+            x.shape[-1] % 4 == 0
+        ), "The last dimension size of x must be divisible by 4"
+        dtype = torch.int8
+        device = x.device
+        x_mapped = x.to(dtype).clone()
+        x_mapped[x == -1] = 2
+        shift = torch.arange(4, device=x.device) * 2
+        shape = x.shape[:-1]
+        x = x_mapped.view(-1, x.shape[-2], x.shape[-1] // 4, 4)
+        x = x << shift[None, None, None, :]
+        x = x.sum(-1)
+        x = x.view(*shape, *x.shape[-1:])
+        return x.to(dtype).to(device)
+
+    def unpack_ternary(self, x: torch.Tensor) -> torch.Tensor:
+        masks = (3 << (2 * torch.arange(4, device=x.device))).view(1, 1, 1, -1)
+        x_expanded = x.unsqueeze(-1)
+        x_expanded = x_expanded * torch.ones_like(masks)
+        unpacked = (x_expanded & masks) >> (2 * torch.arange(4, device=x.device)).view(
+            1, 1, 1, -1
+        )
+        unpacked = torch.where(
+            unpacked == 2, torch.tensor(-1, device=x.device), unpacked
+        )
+        return unpacked.view(*x.shape[:-1], -1)
+
+    def convert_weights_to_packed(self):
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+            packed_weight = self.pack_ternary(w_q)
+            self.beta = torch.nn.Parameter(beta)
+            del self.weight
+            self.register_buffer("weight", packed_weight)
 
 
 class BitLinearb158(nn.Linear, QuantizationMixin):
@@ -50,7 +82,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         out_features: int,
         bias: bool = True,
         num_bits: int = 8,
-        epsilon: float = 1e-6,
+        epsilon: float = 1e-5,
         device=None,
         dtype=None,
     ):
@@ -62,7 +94,10 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
     def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
         x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
-        w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        else:
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
         x_matmul = F.linear(x_q, w_q, self.bias)
         output = self.dequantize(x_matmul, gamma, beta)
         return output
@@ -81,7 +116,7 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
         bias: bool = True,
         padding_mode: str = "zeros",
         num_bits: int = 8,
-        epsilon: float = 1e-6,
+        epsilon: float = 1e-5,
         device=None,
         dtype=None,
     ) -> None:
@@ -103,7 +138,10 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
     def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
         x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
-        w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        else:
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
         x_conv2d = F.conv2d(
             input=x_q,
             weight=w_q,
