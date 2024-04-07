@@ -3,7 +3,7 @@ from functools import partial
 import torch.nn as nn
 from timm.models.vision_transformer import VisionTransformer
 
-from bitnetb158.replace_hf import replace_linear_with_bitlinearb158
+from ..replace_hf import replace_linear_with_bitlinearb158
 
 
 def bit_deit_tiny_patch16_224(num_classes=1000):
