@@ -38,31 +38,6 @@ class QuantizationMixin:
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
         return x * (beta * gamma / self.quantization_range)
 
-
-class BitLinearb158(nn.Linear, QuantizationMixin):
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        bias: bool = True,
-        num_bits: int = 8,
-        epsilon: float = 1e-5,
-        device=None,
-        dtype=None,
-    ):
-        super(BitLinearb158, self).__init__(
-            in_features, out_features, bias, device=device, dtype=dtype
-        )
-        QuantizationMixin.__init__(self, num_bits, epsilon)
-
-    def forward(self, x):
-        x_norm = F.layer_norm(x, x.shape[1:])
-        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
-        w_q, beta = self.quantize_weights(self.weight, self.epsilon)
-        x_matmul = F.linear(x_q, w_q, self.bias)
-        output = self.dequantize(x_matmul, gamma, beta)
-        return output
-
     def pack_ternary(self, x: torch.Tensor) -> torch.Tensor:
         assert (
             x.shape[-1] % 4 == 0
@@ -99,12 +74,32 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             del self.weight
             self.register_buffer("weight", packed_weight)
 
-    def forward_after_packed(self, x):
+
+class BitLinearb158(nn.Linear, QuantizationMixin):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        num_bits: int = 8,
+        epsilon: float = 1e-5,
+        device=None,
+        dtype=None,
+    ):
+        super(BitLinearb158, self).__init__(
+            in_features, out_features, bias, device=device, dtype=dtype
+        )
+        QuantizationMixin.__init__(self, num_bits, epsilon)
+
+    def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
         x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
-        unpacked_weight = self.unpack_ternary(self.weight)
-        x_matmul = F.linear(x_q, unpacked_weight.to(torch.float32), self.bias)
-        output = self.dequantize(x_matmul, gamma, self.beta)
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        else:
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
+        x_matmul = F.linear(x_q, w_q, self.bias)
+        output = self.dequantize(x_matmul, gamma, beta)
         return output
 
 
@@ -143,7 +138,10 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
     def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
         x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
-        w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        if isinstance(self.weight, torch.nn.Parameter):
+            w_q, beta = self.quantize_weights(self.weight, self.epsilon)
+        else:
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
         x_conv2d = F.conv2d(
             input=x_q,
             weight=w_q,
