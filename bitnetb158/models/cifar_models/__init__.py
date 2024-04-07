@@ -1,1 +1,0 @@
-from .cifar_bitresnetb158 import bitresnet18b158
