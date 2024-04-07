@@ -4,6 +4,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ..triton_kernels.bitmat_kernel import batched_bitmat
+
 
 class QuantizationMixin:
     def __init__(self, epsilon: float = 1e-5):
@@ -97,7 +99,15 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             x_matmul = F.linear(x_q, w_q, self.bias)
         else:
             x_q, gamma = self.absmax_quantize(x_norm, ste=False)
-            w_q, beta = self.unpack_ternary(self.weight), self.beta
-            x_matmul = F.linear(x_q.to(torch.float32), w_q.to(torch.float32), self.bias)
+            if x_q.dim() == 2:
+                x_q = x_q.unsqueeze(1)
+            x_matmul = batched_bitmat(x_q, self.weight)
+            if self.bias is not None:
+                x_matmul += self.bias.unsqueeze(0).expand_as(x_matmul)
+            beta = self.beta
+            # w_q, beta = self.unpack_ternary(self.weight), self.beta
+            # x_matmul = F.linear(
+            #     x_q.to(torch.float32), w_q.to(torch.float32), self.bias
+            # )
         output = self.dequantize(x_matmul, gamma, beta)
         return output
