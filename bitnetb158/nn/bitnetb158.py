@@ -92,7 +92,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         else:
             gamma = x.abs().max().clamp(min=self.epsilon)
             x_scaled = x * 127 / gamma
-            x_q = (torch.clamp(x_scaled, -127, 128)).to(torch.int8)
+            x_q = (torch.clamp(x_scaled, -128, 127)).to(torch.int8)
             w_q, beta = self.unpack_ternary(self.weight), self.beta
             x_matmul = F.linear(x_q.to(torch.float32), w_q.to(torch.float32), self.bias)
         output = self.dequantize(x_matmul, gamma, beta)
@@ -148,7 +148,7 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
         else:
             gamma = x.abs().max().clamp(min=self.epsilon)
             x_scaled = x * 127 / gamma
-            x_q = (torch.clamp(x_scaled, -127, 128)).to(torch.int8)
+            x_q = (torch.clamp(x_scaled, -128, 127)).to(torch.int8)
             w_q, beta = self.unpack_ternary(self.weight), self.beta
             x_conv2d = F.conv2d(
                 input=x_q.to(torch.float32),
