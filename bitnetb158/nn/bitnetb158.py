@@ -7,15 +7,22 @@ from torch.nn.common_types import _size_2_t
 
 
 class QuantizationMixin:
-    def __init__(self, epsilon: float = 1e-5):
+    def __init__(self, num_bits: int = 8, epsilon: float = 1e-5):
+        self.num_bits = num_bits
+        self.quantization_range = 2 ** (self.num_bits - 1)
         self.epsilon = epsilon
 
     def absmax_quantize(
-        self, x: torch.Tensor, epsilon: float
+        self, x: torch.Tensor, quantization_range: int, epsilon: float
     ) -> Tuple[torch.Tensor, float]:
         gamma = x.abs().max().clamp(min=epsilon)
-        x_scaled = x * 127 / gamma
-        x_q = (torch.clamp(x_scaled, -128, 127) - x_scaled).detach() + x_scaled
+        x_scaled = x * quantization_range / gamma
+        x_q = (
+            torch.clamp(
+                torch.round(x_scaled), -quantization_range, quantization_range - 1
+            )
+            - x_scaled
+        ).detach() + x_scaled
         return x_q, gamma
 
     def quantize_weights(
@@ -74,6 +81,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         in_features: int,
         out_features: int,
         bias: bool = True,
+        num_bits: int = 8,
         epsilon: float = 1e-5,
         device=None,
         dtype=None,
@@ -81,20 +89,16 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         super(BitLinearb158, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
         )
-        QuantizationMixin.__init__(self, epsilon)
+        QuantizationMixin.__init__(self, num_bits, epsilon)
 
     def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
+        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
         if isinstance(self.weight, torch.nn.Parameter):
-            x_q, gamma = self.absmax_quantize(x_norm, self.epsilon)
             w_q, beta = self.quantize_weights(self.weight, self.epsilon)
-            x_matmul = F.linear(x_q, w_q, self.bias)
         else:
-            gamma = x.abs().max().clamp(min=self.epsilon)
-            x_scaled = x * 127 / gamma
-            x_q = (torch.clamp(x_scaled, -128, 127)).to(torch.int8)
-            w_q, beta = self.unpack_ternary(self.weight), self.beta
-            x_matmul = F.linear(x_q.to(torch.float32), w_q.to(torch.float32), self.bias)
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
+        x_matmul = F.linear(x_q, w_q, self.bias)
         output = self.dequantize(x_matmul, gamma, beta)
         return output
 
@@ -111,6 +115,7 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
         groups: int = 1,
         bias: bool = True,
         padding_mode: str = "zeros",
+        num_bits: int = 8,
         epsilon: float = 1e-5,
         device=None,
         dtype=None,
@@ -128,37 +133,23 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
             device=device,
             dtype=dtype,
         )
-        QuantizationMixin.__init__(self, epsilon)
+        QuantizationMixin.__init__(self, num_bits, epsilon)
 
     def forward(self, x):
         x_norm = F.layer_norm(x, x.shape[1:])
-        x_q, gamma = self.absmax_quantize(x_norm, self.epsilon)
+        x_q, gamma = self.absmax_quantize(x_norm, self.quantization_range, self.epsilon)
         if isinstance(self.weight, torch.nn.Parameter):
-            x_q, gamma = self.absmax_quantize(x_norm, self.epsilon)
             w_q, beta = self.quantize_weights(self.weight, self.epsilon)
-            x_conv2d = F.conv2d(
-                input=x_q,
-                weight=w_q,
-                bias=self.bias,
-                stride=self.stride,
-                padding=self.padding,
-                dilation=self.dilation,
-                groups=self.groups,
-            )
         else:
-            gamma = x.abs().max().clamp(min=self.epsilon)
-            x_scaled = x * 127 / gamma
-            x_q = (torch.clamp(x_scaled, -128, 127)).to(torch.int8)
-            w_q, beta = self.unpack_ternary(self.weight), self.beta
-            x_conv2d = F.conv2d(
-                input=x_q.to(torch.float32),
-                weight=w_q.to(torch.float32),
-                bias=self.bias,
-                stride=self.stride,
-                padding=self.padding,
-                dilation=self.dilation,
-                groups=self.groups,
-            )
-
+            w_q, beta = self.unpack_ternary(self.weight).to(torch.float32), self.beta
+        x_conv2d = F.conv2d(
+            input=x_q,
+            weight=w_q,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups,
+        )
         output = self.dequantize(x_conv2d, gamma, beta)
         return output
