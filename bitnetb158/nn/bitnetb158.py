@@ -31,9 +31,9 @@ class QuantizationMixin:
         beta = weight.abs().mean().clamp(min=self.epsilon)
         weight_scaled = weight / beta
         weight_quantized = (
-            torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight_scaled.dtype)
-            - weight_scaled
-        ).detach() + weight_scaled
+            torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight.dtype)
+            - weight
+        ).detach() + weight
         return weight_quantized, beta
 
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
