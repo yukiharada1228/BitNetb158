@@ -1,1 +1,1 @@
-from .bitnetb158 import BitLinearb158
+from .bitnetb158 import BitConv2db158, BitLinearb158
