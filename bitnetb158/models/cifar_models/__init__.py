@@ -1,0 +1,1 @@
+from .cifar_bit_resnet18_b158 import bit_resnet18_b158
