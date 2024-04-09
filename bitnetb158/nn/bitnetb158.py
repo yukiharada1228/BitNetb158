@@ -1,8 +1,9 @@
-from typing import Tuple
+from typing import Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.common_types import _size_2_t
 
 from ..triton_kernels.bitmat_kernel import batched_bitmat
 
@@ -30,9 +31,12 @@ class QuantizationMixin:
     def quantize_weights(self, weight: torch.Tensor) -> Tuple[torch.Tensor, float]:
         beta = weight.abs().mean().clamp(min=self.epsilon)
         weight_scaled = weight / beta
+        # weight_quantized = (
+        #     torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight_scaled.dtype)
+        #     - weight_scaled
+        # ).detach() + weight_scaled
         weight_quantized = (
-            torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight.dtype)
-            - weight
+            torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight.dtype) - weight
         ).detach() + weight
         return weight_quantized, beta
 
@@ -110,4 +114,52 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             #     x_q.to(torch.float32), w_q.to(torch.float32), self.bias
             # )
         output = self.dequantize(x_matmul, gamma, beta)
+        return output
+
+
+class BitConv2db158(nn.Conv2d, QuantizationMixin):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: _size_2_t,
+        stride: _size_2_t = 1,
+        padding: Union[str, _size_2_t] = 0,
+        dilation: _size_2_t = 1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = "zeros",
+        epsilon: float = 1e-5,
+        device=None,
+        dtype=None,
+    ) -> None:
+        super(BitConv2db158, self).__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+            device=device,
+            dtype=dtype,
+        )
+        QuantizationMixin.__init__(self, epsilon)
+
+    def forward(self, x):
+        x_norm = F.layer_norm(x, x.shape[1:])
+        x_q, gamma = self.absmax_quantize(x_norm)
+        w_q, beta = self.quantize_weights(self.weight)
+        x_conv2d = F.conv2d(
+            input=x_q,
+            weight=w_q,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups,
+        )
+        output = self.dequantize(x_conv2d, gamma, beta)
         return output
