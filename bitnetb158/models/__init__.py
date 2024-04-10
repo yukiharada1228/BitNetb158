@@ -1,1 +1,1 @@
-from .bit_deit import bit_deit_base_patch16_224, bit_deit_tiny_patch16_224
+from .bit_deit_b158 import bit_deit_tiny_patch16_224_b158
