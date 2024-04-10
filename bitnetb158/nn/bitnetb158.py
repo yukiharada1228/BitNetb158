@@ -32,7 +32,7 @@ class QuantizationMixin:
     ) -> Tuple[torch.Tensor, float]:
         gamma = x.abs().max().clamp(min=self.epsilon)
         x_scaled = x * 128 / gamma
-        x_q = x_scaled.clamp(-128 + self.epsilon, 128 - self.epsilon)
+        x_q = x_scaled.round().clamp(-128, 127)
         if ste:
             x_q = (x_q - x_scaled).detach() + x_scaled
         else:
