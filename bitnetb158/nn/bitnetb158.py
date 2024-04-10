@@ -1,15 +1,28 @@
-from typing import Tuple, Union
+from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.common_types import _size_2_t
 
 from ..triton_kernels.bitmat_kernel import batched_bitmat
 
 
+class BitRMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+
 class QuantizationMixin:
-    def __init__(self, epsilon: float = 1e-5):
+    def __init__(self, epsilon: float = 1e-6):
         self.epsilon = epsilon
 
     def absmax_quantize(
@@ -18,30 +31,24 @@ class QuantizationMixin:
         ste: bool = True,
     ) -> Tuple[torch.Tensor, float]:
         gamma = x.abs().max().clamp(min=self.epsilon)
-        x_scaled = x * 127 / gamma
+        x_scaled = x * 128 / gamma
+        x_q = x_scaled.clamp(-128 + self.epsilon, 128 - self.epsilon)
         if ste:
-            x_q = (
-                torch.clamp(x_scaled, -128, 127).to(torch.int8).to(x_scaled.dtype)
-                - x_scaled
-            ).detach() + x_scaled
+            x_q = (x_q - x_scaled).detach() + x_scaled
         else:
-            x_q = torch.clamp(x_scaled, -128, 127).to(torch.int8)
+            x_q = x_q.to(torch.int8)
         return x_q, gamma
 
     def quantize_weights(self, weight: torch.Tensor) -> Tuple[torch.Tensor, float]:
         beta = weight.abs().mean().clamp(min=self.epsilon)
         weight_scaled = weight / beta
-        # weight_quantized = (
-        #     torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight_scaled.dtype)
-        #     - weight_scaled
-        # ).detach() + weight_scaled
         weight_quantized = (
-            torch.clamp(weight_scaled, -1, 1).to(torch.int8).to(weight.dtype) - weight
+            weight_scaled.round().clamp(-1, 1) - weight
         ).detach() + weight
         return weight_quantized, beta
 
     def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
-        return x * (beta * gamma / 127)
+        return x * (beta * gamma / 128)
 
     def pack_ternary(self, x: torch.Tensor) -> torch.Tensor:
         assert (
@@ -86,7 +93,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
         in_features: int,
         out_features: int,
         bias: bool = True,
-        epsilon: float = 1e-5,
+        epsilon: float = 1e-6,
         device=None,
         dtype=None,
     ):
@@ -94,9 +101,10 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             in_features, out_features, bias, device=device, dtype=dtype
         )
         QuantizationMixin.__init__(self, epsilon)
+        self.layernorm = BitRMSNorm(hidden_size=in_features, eps=epsilon)
 
     def forward(self, x):
-        x_norm = F.layer_norm(x, x.shape[1:])
+        x_norm = self.layernorm(x)
         if isinstance(self.weight, torch.nn.Parameter):
             x_q, gamma = self.absmax_quantize(x_norm)
             w_q, beta = self.quantize_weights(self.weight)
@@ -109,57 +117,5 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             if self.bias is not None:
                 x_matmul += self.bias.unsqueeze(0).expand_as(x_matmul)
             beta = self.beta
-            # w_q, beta = self.unpack_ternary(self.weight), self.beta
-            # x_matmul = F.linear(
-            #     x_q.to(torch.float32), w_q.to(torch.float32), self.bias
-            # )
         output = self.dequantize(x_matmul, gamma, beta)
-        return output
-
-
-class BitConv2db158(nn.Conv2d, QuantizationMixin):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: _size_2_t,
-        stride: _size_2_t = 1,
-        padding: Union[str, _size_2_t] = 0,
-        dilation: _size_2_t = 1,
-        groups: int = 1,
-        bias: bool = True,
-        padding_mode: str = "zeros",
-        epsilon: float = 1e-5,
-        device=None,
-        dtype=None,
-    ) -> None:
-        super(BitConv2db158, self).__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride=stride,
-            padding=padding,
-            dilation=dilation,
-            groups=groups,
-            bias=bias,
-            padding_mode=padding_mode,
-            device=device,
-            dtype=dtype,
-        )
-        QuantizationMixin.__init__(self, epsilon)
-
-    def forward(self, x):
-        x_norm = F.layer_norm(x, x.shape[1:])
-        x_q, gamma = self.absmax_quantize(x_norm)
-        w_q, beta = self.quantize_weights(self.weight)
-        x_conv2d = F.conv2d(
-            input=x_q,
-            weight=w_q,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-            groups=self.groups,
-        )
-        output = self.dequantize(x_conv2d, gamma, beta)
         return output
