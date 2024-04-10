@@ -7,20 +7,6 @@ from torch import nn
 from ..triton_kernels.bitmat_kernel import batched_bitmat
 
 
-class BitRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
-
-
 class QuantizationMixin:
     def __init__(self, epsilon: float = 1e-6):
         self.epsilon = epsilon
@@ -101,7 +87,7 @@ class BitLinearb158(nn.Linear, QuantizationMixin):
             in_features, out_features, bias, device=device, dtype=dtype
         )
         QuantizationMixin.__init__(self, epsilon)
-        self.layernorm = BitRMSNorm(hidden_size=in_features, eps=epsilon)
+        self.layernorm = nn.LayerNorm(in_features, eps=epsilon)
 
     def forward(self, x):
         x_norm = self.layernorm(x)
