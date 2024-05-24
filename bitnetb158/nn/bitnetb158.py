@@ -1,62 +1,65 @@
-from typing import Tuple, Union
+from typing import Union
 
-import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.common_types import _size_2_t
 
 
-class QuantizationMixin:
-    def __init__(self, epsilon: float = 1e-6):
-        self.epsilon = epsilon
-
-    def absmax_quantize(
-        self,
-        x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, float]:
-        gamma = x.abs().max().clamp(min=self.epsilon)
-        x_scaled = x * 127 / gamma
-        x_q = (x_scaled.round().clamp(-128, 127) - x_scaled).detach() + x_scaled
-        return x_q, gamma
-
-    def quantize_weights(self, weight: torch.Tensor) -> Tuple[torch.Tensor, float]:
-        beta = weight.abs().mean().clamp(min=self.epsilon)
-        weight_scaled = weight / beta
-        weight_quantized = (
-            weight_scaled.round().clamp(-1, 1) - weight
-        ).detach() + weight
-        return weight_quantized, beta
-
-    def dequantize(self, x: torch.Tensor, gamma: float, beta: float) -> torch.Tensor:
-        return x * (beta * gamma / 127)
+def activation_quant(x):
+    """Per-token quantization to 8 bits. No grouping is needed for quantization.
+    Args:
+    x: an activation tensor with shape [n, d]
+    Returns:
+    y: a quantized activation tensor with shape [n, d]
+    """
+    scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
+    y = (x * scale).round().clamp_(-128, 127) / scale
+    return y
 
 
-class BitLinearb158(nn.Linear, QuantizationMixin):
+def weight_quant(w):
+    """Per-tensor quantization to 1.58 bits. No grouping is needed for quantization.
+    Args:
+    w: a weight tensor with shape [d, k]
+    Returns:
+    u: a quantized weight with shape [d, k]
+    """
+    scale = 1.0 / w.abs().mean().clamp_(min=1e-5)
+    u = (w * scale).round().clamp_(-1, 1) / scale
+    return u
+
+
+class BitLinearb158(nn.Linear):
     def __init__(
         self,
         in_features: int,
         out_features: int,
         bias: bool = True,
-        epsilon: float = 1e-6,
         device=None,
         dtype=None,
     ):
         super(BitLinearb158, self).__init__(
             in_features, out_features, bias, device=device, dtype=dtype
         )
-        QuantizationMixin.__init__(self, epsilon)
-        self.layernorm = nn.LayerNorm(in_features, eps=epsilon)
+        self.layer_norm = nn.LayerNorm(in_features, eps=1e-5)
 
     def forward(self, x):
-        x_norm = self.layernorm(x)
-        x_q, gamma = self.absmax_quantize(x_norm)
-        w_q, beta = self.quantize_weights(self.weight)
-        x_matmul = F.linear(x_q, w_q, self.bias)
-        output = self.dequantize(x_matmul, gamma, beta)
-        return output
+        """
+        Args:
+        x: an input tensor with shape [n, d]
+        Returns:
+        y: an output tensor with shape [n, d]
+        """
+        w = self.weight  # a weight tensor with shape [d, k]
+        x_norm = self.layer_norm(x)
+        # A trick for implementing Straight−Through−Estimator (STE) using detach()
+        x_quant = x_norm + (activation_quant(x_norm) - x_norm).detach()
+        w_quant = w + (weight_quant(w) - w).detach()
+        y = F.linear(x_quant, w_quant)
+        return y
 
 
-class BitConv2db158(nn.Conv2d, QuantizationMixin):
+class BitConv2db158(nn.Conv2d):
     def __init__(
         self,
         in_channels: int,
@@ -85,20 +88,20 @@ class BitConv2db158(nn.Conv2d, QuantizationMixin):
             device=device,
             dtype=dtype,
         )
-        QuantizationMixin.__init__(self, epsilon)
 
     def forward(self, x):
-        x_norm = F.layer_norm(x, x.shape[1:], eps=self.epsilon)
-        x_q, gamma = self.absmax_quantize(x_norm)
-        w_q, beta = self.quantize_weights(self.weight)
-        x_conv2d = F.conv2d(
-            input=x_q,
-            weight=w_q,
+        w = self.weight
+        x_norm = F.layer_norm(x, x.shape[1:], eps=1e-5)
+        # A trick for implementing Straight−Through−Estimator (STE) using detach()
+        x_quant = x_norm + (activation_quant(x_norm) - x_norm).detach()
+        w_quant = w + (weight_quant(w) - w).detach()
+        y = F.conv2d(
+            input=x_quant,
+            weight=w_quant,
             bias=self.bias,
             stride=self.stride,
             padding=self.padding,
             dilation=self.dilation,
             groups=self.groups,
         )
-        output = self.dequantize(x_conv2d, gamma, beta)
-        return output
+        return y
